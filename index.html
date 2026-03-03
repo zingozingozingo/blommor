@@ -1,1 +1,119 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blomsterigenkänning AI</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background-color: #f0f4f8; }
+        .container { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; width: 100%; text-align: center; }
+        #image-preview { max-width: 100%; height: auto; margin-top: 15px; border-radius: 4px; display: none; }
+        .result-box { margin-top: 20px; padding: 15px; border-radius: 4px; font-weight: bold; }
+        .saker { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .osaker { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        #status { margin-bottom: 10px; color: #666; }
+        input[type="file"] { margin: 15px 0; }
+    </style>
+</head>
+<body>
 
+<div class="container">
+    <h1>Identifiera blommor</h1>
+    <p id="status">Laddar AI-modell...</p>
+    
+    <input type="file" id="image-selector" accept="image/*" disabled>
+    <br>
+    <img id="image-preview" src="#" alt="Förhandsvisning">
+    
+    <div id="result-container" class="result-box" style="display: none;">
+        <div id="prediction-text"></div>
+        <div id="confidence-text"></div>
+    </div>
+</div>
+
+<script>
+    let model;
+    // Etiketterna i den ordning modellen tränats (standard för blom-dataset)
+    const LABELS = ['Daisy', 'Dandelion', 'Rose', 'Sunflower', 'Tulip'];
+
+    // 1. Ladda modellen
+    async function loadModel() {
+        try {
+            // Sökvägen till din model.json i mappen tfjs_model
+            model = await tf.loadLayersModel('tfjs_model/model.json');
+            document.getElementById('status').innerText = 'Modellen är redo!';
+            document.getElementById('image-selector').disabled = false;
+        } catch (error) {
+            document.getElementById('status').innerText = 'Fel vid laddning av modell: ' + error.message;
+        }
+    }
+
+    // 2. Hantera bilduppladdning
+    const imageSelector = document.getElementById('image-selector');
+    const imagePreview = document.getElementById('image-preview');
+
+    imageSelector.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                imagePreview.src = e.target.result;
+                imagePreview.style.display = 'block';
+                // Vänta tills bilden laddats i <img> taggen innan prediktion
+                imagePreview.onload = () => predict();
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    // 3. Kör prediktion
+    async function predict() {
+        if (!model) return;
+
+        // Förbered bilden (Preprocessing)
+        // Modellen förväntar sig 224x224 pixlar
+        let tensor = tf.browser.fromPixels(imagePreview)
+            .resizeNearestNeighbor([224, 224])
+            .toFloat();
+
+        // Normalisering (MobileNetV2 använder ofta -1 till 1 eller 0 till 1)
+        // Här antar vi 0-1 normalisering (pixel / 255)
+        let offset = tf.scalar(255.0);
+        let normalized = tensor.div(offset);
+        let batched = normalized.expandDims(0);
+
+        // Kör modellen
+        const prediction = await model.predict(batched).data();
+        
+        // Hitta högsta sannolikhet
+        const maxConfidence = Math.max(...prediction);
+        const classIndex = prediction.indexOf(maxConfidence);
+        const label = LABELS[classIndex];
+
+        displayResult(label, maxConfidence);
+    }
+
+    // 4. Visa resultatet
+    function displayResult(label, confidence) {
+        const resultContainer = document.getElementById('result-container');
+        const predText = document.getElementById('prediction-text');
+        const confText = document.getElementById('confidence-text');
+
+        resultContainer.style.display = 'block';
+        predText.innerText = `Resultat: ${label}`;
+        
+        if (confidence >= 0.75) {
+            resultContainer.className = 'result-box saker';
+            confText.innerText = `Status: Säker (${(confidence * 100).toFixed(1)}%)`;
+        } else {
+            resultContainer.className = 'result-box osaker';
+            confText.innerText = `Status: Osäker (${(confidence * 100).toFixed(1)}%)`;
+        }
+    }
+
+    loadModel();
+</script>
+
+</body>
+</html>
