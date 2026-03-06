@@ -34,22 +34,38 @@
 
 <script>
     let model;
-    // Etiketterna i den ordning modellen tränats (standard för blom-dataset)
     const LABELS = ['Daisy', 'Dandelion', 'Rose', 'Sunflower', 'Tulip'];
 
-    // 1. Ladda modellen
     async function loadModel() {
         try {
-            // Sökvägen till din model.json i mappen tfjs_model
-            model = await tf.loadLayersModel('tfjs_model/model.json');
+            const modelUrl = 'tfjs_model/model.json';
+            
+            // FIX: Vi laddar JSON-filen manuellt först för att korrigera InputLayer-formatet
+            const response = await fetch(modelUrl);
+            const modelJson = await response.json();
+
+            // Gå igenom lagren och se till att input-lagret har rätt format för TF.js
+            if (modelJson.modelTopology && modelJson.modelTopology.model_config) {
+                const layers = modelJson.modelTopology.model_config.config.layers;
+                layers.forEach(layer => {
+                    if (layer.class_name === "InputLayer" && layer.config.batch_shape) {
+                        // TF.js förväntar sig batchInputShape i vissa versioner
+                        layer.config.batchInputShape = layer.config.batch_shape;
+                    }
+                });
+            }
+
+            // Ladda modellen från det korrigerade JSON-objektet
+            model = await tf.loadLayersModel(tf.io.fromMemory(modelJson));
+            
             document.getElementById('status').innerText = 'Modellen är redo!';
             document.getElementById('image-selector').disabled = false;
         } catch (error) {
-            document.getElementById('status').innerText = 'Fel vid laddning av modell: ' + error.message;
+            console.error(error);
+            document.getElementById('status').innerText = 'Fel vid laddning: ' + error.message;
         }
     }
 
-    // 2. Hantera bilduppladdning
     const imageSelector = document.getElementById('image-selector');
     const imagePreview = document.getElementById('image-preview');
 
@@ -60,33 +76,30 @@
             reader.onload = (e) => {
                 imagePreview.src = e.target.result;
                 imagePreview.style.display = 'block';
-                // Vänta tills bilden laddats i <img> taggen innan prediktion
                 imagePreview.onload = () => predict();
             };
             reader.readAsDataURL(file);
         }
     });
 
-    // 3. Kör prediktion
     async function predict() {
         if (!model) return;
 
-        // Förbered bilden (Preprocessing)
-        // Modellen förväntar sig 224x224 pixlar
-        let tensor = tf.browser.fromPixels(imagePreview)
-            .resizeNearestNeighbor([224, 224])
-            .toFloat();
+        // Skapa tensor och kör preprocessing
+        const tensor = tf.tidy(() => {
+            const img = tf.browser.fromPixels(imagePreview)
+                .resizeNearestNeighbor([224, 224])
+                .toFloat();
+            
+            // MobileNetV2 vill ofta ha värden mellan -1 och 1
+            // Formel: (pixel / 127.5) - 1
+            const offset = tf.scalar(127.5);
+            return img.sub(offset).div(offset).expandDims(0);
+        });
 
-        // Normalisering (MobileNetV2 använder ofta -1 till 1 eller 0 till 1)
-        // Här antar vi 0-1 normalisering (pixel / 255)
-        let offset = tf.scalar(255.0);
-        let normalized = tensor.div(offset);
-        let batched = normalized.expandDims(0);
-
-        // Kör modellen
-        const prediction = await model.predict(batched).data();
+        const prediction = await model.predict(tensor).data();
+        tensor.dispose(); // Frigör minne
         
-        // Hitta högsta sannolikhet
         const maxConfidence = Math.max(...prediction);
         const classIndex = prediction.indexOf(maxConfidence);
         const label = LABELS[classIndex];
@@ -94,7 +107,6 @@
         displayResult(label, maxConfidence);
     }
 
-    // 4. Visa resultatet
     function displayResult(label, confidence) {
         const resultContainer = document.getElementById('result-container');
         const predText = document.getElementById('prediction-text');
