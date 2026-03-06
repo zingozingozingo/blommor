@@ -38,34 +38,46 @@
 
     async function loadModel() {
         try {
+            await tf.ready();
             const modelUrl = 'tfjs_model/model.json';
             
-            // FIX: Vi laddar JSON-filen manuellt först för att korrigera InputLayer-formatet
+            // 1. Hämta JSON-filen manuellt
             const response = await fetch(modelUrl);
             const modelJson = await response.json();
 
-            // Gå igenom lagren och se till att input-lagret har rätt format för TF.js
+            // 2. Tvinga fram rätt format på InputLayer
             if (modelJson.modelTopology && modelJson.modelTopology.model_config) {
-                const layers = modelJson.modelTopology.model_config.config.layers;
-                layers.forEach(layer => {
-                    if (layer.class_name === "InputLayer" && layer.config.batch_shape) {
-                        // TF.js förväntar sig batchInputShape i vissa versioner
-                        layer.config.batchInputShape = layer.config.batch_shape;
+                const config = modelJson.modelTopology.model_config.config;
+                let layers = config.layers;
+
+                // Om det är en Sequential-modell (vilket din är)
+                if (layers && layers.length > 0) {
+                    const firstLayer = layers[0];
+                    
+                    // Om första lagret saknar batchInputShape, lägg till det manuellt
+                    if (firstLayer.class_name === "InputLayer") {
+                        const batchShape = firstLayer.config.batch_shape || [null, 224, 224, 3];
+                        firstLayer.config.batchInputShape = batchShape;
+                    } 
+                    // Ibland saknas InputLayer helt och ligger som metadata i det första "riktiga" lagret
+                    else if (!firstLayer.config.batchInputShape) {
+                        firstLayer.config.batchInputShape = [null, 224, 224, 3];
                     }
-                });
+                }
             }
 
-            // Ladda modellen från det korrigerade JSON-objektet
+            // 3. Ladda modellen från det modifierade objektet
             model = await tf.loadLayersModel(tf.io.fromMemory(modelJson));
             
             document.getElementById('status').innerText = 'Modellen är redo!';
             document.getElementById('image-selector').disabled = false;
         } catch (error) {
-            console.error(error);
-            document.getElementById('status').innerText = 'Fel vid laddning: ' + error.message;
+            console.error("Fullständigt felmeddelande:", error);
+            document.getElementById('status').innerText = 'Fel: ' + error.message;
         }
     }
 
+    // --- Samma logik för bildhantering som tidigare ---
     const imageSelector = document.getElementById('image-selector');
     const imagePreview = document.getElementById('image-preview');
 
@@ -85,47 +97,35 @@
     async function predict() {
         if (!model) return;
 
-        // Skapa tensor och kör preprocessing
         const tensor = tf.tidy(() => {
-            const img = tf.browser.fromPixels(imagePreview)
+            return tf.browser.fromPixels(imagePreview)
                 .resizeNearestNeighbor([224, 224])
-                .toFloat();
-            
-            // MobileNetV2 vill ofta ha värden mellan -1 och 1
-            // Formel: (pixel / 127.5) - 1
-            const offset = tf.scalar(127.5);
-            return img.sub(offset).div(offset).expandDims(0);
+                .toFloat()
+                .div(tf.scalar(127.5))
+                .sub(tf.scalar(1.0))
+                .expandDims(0);
         });
 
         const prediction = await model.predict(tensor).data();
-        tensor.dispose(); // Frigör minne
+        tensor.dispose();
         
         const maxConfidence = Math.max(...prediction);
         const classIndex = prediction.indexOf(maxConfidence);
-        const label = LABELS[classIndex];
-
-        displayResult(label, maxConfidence);
+        displayResult(LABELS[classIndex], maxConfidence);
     }
 
     function displayResult(label, confidence) {
         const resultContainer = document.getElementById('result-container');
-        const predText = document.getElementById('prediction-text');
-        const confText = document.getElementById('confidence-text');
-
         resultContainer.style.display = 'block';
-        predText.innerText = `Resultat: ${label}`;
+        document.getElementById('prediction-text').innerText = `Resultat: ${label}`;
         
-        if (confidence >= 0.75) {
-            resultContainer.className = 'result-box saker';
-            confText.innerText = `Status: Säker (${(confidence * 100).toFixed(1)}%)`;
-        } else {
-            resultContainer.className = 'result-box osaker';
-            confText.innerText = `Status: Osäker (${(confidence * 100).toFixed(1)}%)`;
-        }
+        const isSaker = confidence >= 0.75;
+        resultContainer.className = `result-box ${isSaker ? 'saker' : 'osaker'}`;
+        document.getElementById('confidence-text').innerText = 
+            `Status: ${isSaker ? 'Säker' : 'Osäker'} (${(confidence * 100).toFixed(1)}%)`;
     }
 
     loadModel();
 </script>
-
 </body>
 </html>
