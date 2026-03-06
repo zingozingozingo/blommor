@@ -513,6 +513,27 @@
 
     // ── Load model ──────────────────────────────────────────────────
     (async () => {
+      // 1. Preflight: check that model.json is reachable
+      try {
+        const probe = await fetch('tfjs_model/model.json');
+        if (!probe.ok) {
+          throw new Error(`HTTP ${probe.status} ${probe.statusText} — kunde inte hämta tfjs_model/model.json`);
+        }
+      } catch (e) {
+        statusEl.classList.add('error');
+        statusText.textContent = 'Modell hittades inte';
+
+        const isCors = e instanceof TypeError && e.message.toLowerCase().includes('fetch');
+        showError(
+          isCors
+            ? 'Sidan måste köras via en webbserver (inte direkt som en fil). Prova: python3 -m http.server 8080 i projektmappen och öppna http://localhost:8080.'
+            : 'Modellens fil saknas eller är otillgänglig: ' + e.message,
+          e
+        );
+        return;
+      }
+
+      // 2. Actually load the model
       try {
         model = await tf.loadLayersModel('tfjs_model/model.json');
         statusEl.classList.add('ready');
@@ -520,10 +541,20 @@
       } catch (e) {
         statusEl.classList.add('error');
         statusText.textContent = 'Modell misslyckades';
-        showError(
-          'Kunde inte ladda modellen från "tfjs_model/model.json". Kontrollera att alla modellfiler finns på rätt plats och att sidan körs via en webbserver (inte direkt som fil).',
-          e
-        );
+
+        // Parse a friendlier message from common TF.js errors
+        let friendly = 'TensorFlow.js kunde inte ladda modellen.';
+        const msg = e.message || '';
+        if (msg.includes('404') || msg.includes('not found'))
+          friendly = 'En eller flera .bin-vikter filer hittades inte (404). Kontrollera att alla filer i tfjs_model/ är uppladdade.';
+        else if (msg.includes('Cannot parse') || msg.includes('JSON'))
+          friendly = 'model.json verkar vara korrupt eller felformaterad.';
+        else if (msg.includes('shape') || msg.includes('rank'))
+          friendly = 'Modellens arkitektur stämmer inte med vikterna. Kontrollera att rätt model.json och .bin-filer används ihop.';
+        else if (msg)
+          friendly = msg;
+
+        showError(friendly, e);
         console.error(e);
       }
     })();
