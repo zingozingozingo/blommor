@@ -324,6 +324,66 @@
       text-align: center;
     }
 
+    /* ── Error box ── */
+    #error-box {
+      display: none;
+      width: 100%;
+      max-width: 520px;
+      margin-top: 1.2rem;
+      background: rgba(176,112,112,0.08);
+      border: 1px solid rgba(176,112,112,0.35);
+      border-left: 4px solid var(--dusty);
+      border-radius: 4px;
+      padding: 1rem 1.2rem;
+    }
+    #error-box.visible { display: block; }
+    .error-title {
+      font-size: 0.72rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--dusty);
+      margin-bottom: 0.4rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .error-title::before { content: '⚠'; font-size: 0.9rem; }
+    .error-msg {
+      font-size: 0.82rem;
+      color: #7a4040;
+      line-height: 1.55;
+      font-style: italic;
+    }
+    .error-stack {
+      display: none;
+      margin-top: 0.7rem;
+      padding: 0.6rem 0.8rem;
+      background: rgba(0,0,0,0.04);
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.7rem;
+      color: #9a5050;
+      white-space: pre-wrap;
+      word-break: break-all;
+      line-height: 1.5;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    .error-stack.visible { display: block; }
+    .error-toggle {
+      margin-top: 0.6rem;
+      background: none;
+      border: none;
+      font-family: 'Libre Baskerville', serif;
+      font-size: 0.72rem;
+      color: var(--dusty);
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      padding: 0;
+    }
+    .error-toggle:hover { color: #7a4040; }
+
     /* ── Loading spinner ── */
     #spinner {
       display: none;
@@ -358,6 +418,13 @@
     <span id="status-text">Laddar modell…</span>
   </div>
 
+  <div id="error-box">
+    <div class="error-title">Fel</div>
+    <div class="error-msg" id="error-msg"></div>
+    <button class="error-toggle" id="error-toggle" onclick="toggleStack()">Visa teknisk info ▾</button>
+    <div class="error-stack" id="error-stack"></div>
+  </div>
+
   <div id="upload-area">
     <input type="file" id="file-input" accept="image/*">
     <svg class="upload-icon" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -390,8 +457,7 @@
   <footer>MobileNetV2 · TensorFlow.js · 5 klasser</footer>
 
   <script>
-    const LABELS = ['Solros', 'Tulpan', 'Ros', 'Prästkrage', 'Maskros'];
-    const LABEL_EN = ['sunflower', 'tulip', 'rose', 'daisy', 'dandelion'];
+    const LABELS    = ['Solros', 'Tulpan', 'Ros', 'Prästkrage', 'Maskros'];
     const THRESHOLD = 0.75;
 
     let model = null;
@@ -406,6 +472,44 @@
     const barsEl     = document.getElementById('bars-container');
     const spinner    = document.getElementById('spinner');
     const resetBtn   = document.getElementById('reset-btn');
+    const errorBox   = document.getElementById('error-box');
+    const errorMsg   = document.getElementById('error-msg');
+    const errorStack = document.getElementById('error-stack');
+    const errorToggle= document.getElementById('error-toggle');
+
+    // ── Error helpers ────────────────────────────────────────────────
+    function showError(message, err) {
+      errorMsg.textContent = message;
+      if (err) {
+        const stack = err.stack || String(err);
+        errorStack.textContent = stack;
+        errorToggle.style.display = 'block';
+      } else {
+        errorToggle.style.display = 'none';
+      }
+      errorStack.classList.remove('visible');
+      errorToggle.textContent = 'Visa teknisk info ▾';
+      errorBox.classList.add('visible');
+      spinner.classList.remove('active');
+    }
+
+    function clearError() {
+      errorBox.classList.remove('visible');
+      errorStack.classList.remove('visible');
+    }
+
+    window.toggleStack = function() {
+      const open = errorStack.classList.toggle('visible');
+      errorToggle.textContent = open ? 'Dölj teknisk info ▴' : 'Visa teknisk info ▾';
+    };
+
+    // ── Global uncaught errors ───────────────────────────────────────
+    window.addEventListener('error', e => {
+      showError('Ett oväntat fel uppstod: ' + e.message, e.error);
+    });
+    window.addEventListener('unhandledrejection', e => {
+      showError('Ohanterat löftesfel: ' + (e.reason?.message || e.reason), e.reason);
+    });
 
     // ── Load model ──────────────────────────────────────────────────
     (async () => {
@@ -415,7 +519,11 @@
         statusText.textContent = 'Modell redo';
       } catch (e) {
         statusEl.classList.add('error');
-        statusText.textContent = 'Kunde inte ladda modell';
+        statusText.textContent = 'Modell misslyckades';
+        showError(
+          'Kunde inte ladda modellen från "tfjs_model/model.json". Kontrollera att alla modellfiler finns på rätt plats och att sidan körs via en webbserver (inte direkt som fil).',
+          e
+        );
         console.error(e);
       }
     })();
@@ -429,6 +537,7 @@
       uploadArea.classList.remove('drag-over');
       const file = e.dataTransfer.files[0];
       if (file && file.type.startsWith('image/')) processFile(file);
+      else showError('Filen verkar inte vara en bild. Prova JPG, PNG eller WebP.', null);
     });
     fileInput.addEventListener('change', () => {
       if (fileInput.files[0]) processFile(fileInput.files[0]);
@@ -436,26 +545,53 @@
 
     // ── Process file ─────────────────────────────────────────────────
     function processFile(file) {
-      if (!model) { alert('Modellen är inte laddad ännu, försök igen om ett ögonblick.'); return; }
+      clearError();
+
+      if (!model) {
+        showError('Modellen är inte klar ännu. Vänta tills statusen visar "Modell redo" och försök igen.', null);
+        return;
+      }
+
+      if (file.size > 10 * 1024 * 1024) {
+        showError('Bilden är för stor (max 10 MB). Välj en mindre bild.', null);
+        return;
+      }
 
       const reader = new FileReader();
+
+      reader.onerror = () => {
+        showError('Kunde inte läsa filen. Filen kan vara skadad eller av fel typ.', reader.error);
+      };
+
       reader.onload = async e => {
-        // Show preview
         previewImg.src = e.target.result;
         resultSec.classList.remove('visible');
         spinner.classList.add('active');
         uploadArea.style.display = 'none';
         resetBtn.style.display = 'none';
 
-        // Wait for img to load then classify
-        previewImg.onload = async () => {
-          const probs = await classify(previewImg);
+        previewImg.onerror = () => {
           spinner.classList.remove('active');
-          renderResult(probs);
-          resultSec.classList.add('visible');
-          resetBtn.style.display = 'block';
+          uploadArea.style.display = '';
+          showError('Bilden kunde inte visas. Filen kanske är skadad.', null);
+        };
+
+        previewImg.onload = async () => {
+          try {
+            const probs = await classify(previewImg);
+            spinner.classList.remove('active');
+            renderResult(probs);
+            resultSec.classList.add('visible');
+            resetBtn.style.display = 'block';
+          } catch (err) {
+            spinner.classList.remove('active');
+            uploadArea.style.display = '';
+            showError('Klassificeringen misslyckades. Modellen kunde inte bearbeta bilden.', err);
+            console.error(err);
+          }
         };
       };
+
       reader.readAsDataURL(file);
     }
 
@@ -488,9 +624,7 @@
         ? `<span class="icon">✓</span> Säker &nbsp;(${pct(topProb)})`
         : `<span class="icon">?</span> Osäker &nbsp;(${pct(topProb)})`;
 
-      // Bars
       barsEl.innerHTML = '';
-      // Sort indices by prob descending for display
       const order = [...probs.keys()].sort((a,b) => probs[b] - probs[a]);
       order.forEach(i => {
         const row = document.createElement('div');
@@ -502,7 +636,6 @@
           </div>
           <span class="bar-pct">${pct(probs[i])}</span>`;
         barsEl.appendChild(row);
-        // Animate width after paint
         requestAnimationFrame(() => {
           row.querySelector('.bar-fill').style.width = (probs[i] * 100) + '%';
         });
@@ -513,6 +646,7 @@
 
     // ── Reset ─────────────────────────────────────────────────────────
     resetBtn.addEventListener('click', () => {
+      clearError();
       resultSec.classList.remove('visible');
       resetBtn.style.display = 'none';
       uploadArea.style.display = '';
