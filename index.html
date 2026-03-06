@@ -1,131 +1,523 @@
 <!DOCTYPE html>
 <html lang="sv">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Blomsterigenkänning AI</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <style>
-        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background-color: #f0f4f8; }
-        .container { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; width: 100%; text-align: center; }
-        #image-preview { max-width: 100%; height: auto; margin-top: 15px; border-radius: 4px; display: none; }
-        .result-box { margin-top: 20px; padding: 15px; border-radius: 4px; font-weight: bold; }
-        .saker { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .osaker { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        #status { margin-bottom: 10px; color: #666; }
-        input[type="file"] { margin: 15px 0; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Blomklassificering</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.15.0/dist/tf.min.js"></script>
+
+  <style>
+    :root {
+      --cream:    #f5f0e8;
+      --parchment:#ede6d3;
+      --sage:     #5a7a5e;
+      --forest:   #2e4a30;
+      --dusty:    #b07070;
+      --gold:     #c9993a;
+      --ink:      #1e1e1e;
+      --light-sage: #c8d9c9;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--cream);
+      background-image:
+        radial-gradient(ellipse at 10% 20%, rgba(90,122,94,0.07) 0%, transparent 50%),
+        radial-gradient(ellipse at 90% 80%, rgba(201,153,58,0.07) 0%, transparent 50%);
+      font-family: 'Libre Baskerville', serif;
+      color: var(--ink);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 4rem;
+    }
+
+    /* ── Decorative border frame ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 12px;
+      border: 1.5px solid rgba(90,122,94,0.25);
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    /* ── Header ── */
+    header {
+      text-align: center;
+      margin-bottom: 3rem;
+      position: relative;
+    }
+
+    .badge {
+      font-size: 0.68rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--sage);
+      display: block;
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: clamp(2.4rem, 6vw, 4rem);
+      font-weight: 400;
+      line-height: 1.1;
+      color: var(--forest);
+      letter-spacing: -0.01em;
+    }
+
+    h1 em {
+      font-style: italic;
+      color: var(--dusty);
+    }
+
+    .subtitle {
+      margin-top: 0.8rem;
+      font-size: 0.88rem;
+      color: #666;
+      font-style: italic;
+    }
+
+    /* ── Botanical ornament ── */
+    .ornament {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.8rem;
+      margin: 1.2rem 0;
+      color: var(--sage);
+      opacity: 0.5;
+    }
+    .ornament span { font-size: 1.2rem; }
+    .ornament::before, .ornament::after {
+      content: '';
+      display: block;
+      height: 1px;
+      width: 80px;
+      background: linear-gradient(to right, transparent, var(--sage));
+    }
+    .ornament::after { background: linear-gradient(to left, transparent, var(--sage)); }
+
+    /* ── Model status ── */
+    #status {
+      font-size: 0.8rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 0.4rem 1.2rem;
+      border-radius: 100px;
+      background: var(--parchment);
+      border: 1px solid var(--light-sage);
+      color: var(--sage);
+      margin-bottom: 2.5rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.4s;
+    }
+    #status .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--sage);
+      opacity: 0.4;
+      animation: pulse 2s infinite;
+    }
+    #status.ready .dot { background: #5a9e60; opacity: 1; animation: none; }
+    #status.error   .dot { background: var(--dusty); opacity: 1; animation: none; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; } 50% { opacity: 1; }
+    }
+
+    /* ── Upload zone ── */
+    #upload-area {
+      width: 100%;
+      max-width: 520px;
+      border: 2px dashed rgba(90,122,94,0.35);
+      border-radius: 4px;
+      background: rgba(255,255,255,0.45);
+      padding: 3rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.3s, background 0.3s;
+      position: relative;
+    }
+    #upload-area:hover,
+    #upload-area.drag-over {
+      border-color: var(--sage);
+      background: rgba(90,122,94,0.05);
+    }
+
+    #file-input { display: none; }
+
+    .upload-icon {
+      margin: 0 auto 1rem;
+      width: 56px; height: 56px;
+      opacity: 0.35;
+    }
+
+    .upload-label {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.1rem;
+      color: var(--forest);
+      display: block;
+      margin-bottom: 0.4rem;
+    }
+    .upload-sub {
+      font-size: 0.78rem;
+      color: #999;
+      font-style: italic;
+    }
+
+    /* ── Preview + Result card ── */
+    #result-section {
+      margin-top: 2.5rem;
+      width: 100%;
+      max-width: 520px;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 0.5s, transform 0.5s;
+    }
+    #result-section.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    #preview-img {
+      width: 100%;
+      max-height: 340px;
+      object-fit: cover;
+      border-radius: 4px;
+      display: block;
+      border: 1px solid rgba(0,0,0,0.07);
+    }
+
+    .result-card {
+      margin-top: 1.5rem;
+      background: white;
+      border: 1px solid var(--light-sage);
+      border-radius: 4px;
+      padding: 2rem 2rem 1.6rem;
+      position: relative;
+    }
+
+    .result-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(to right, var(--sage), var(--dusty), var(--gold));
+      border-radius: 4px 4px 0 0;
+    }
+
+    .result-label {
+      font-size: 0.68rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #aaa;
+      margin-bottom: 0.6rem;
+    }
+
+    .result-flower {
+      font-family: 'Playfair Display', serif;
+      font-size: 2.2rem;
+      font-weight: 600;
+      color: var(--forest);
+      line-height: 1;
+      margin-bottom: 0.5rem;
+    }
+
+    .confidence-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 0.25rem 0.75rem;
+      border-radius: 100px;
+    }
+    .confidence-badge.certain {
+      background: rgba(90,158,96,0.12);
+      color: #3a7d40;
+      border: 1px solid rgba(90,158,96,0.3);
+    }
+    .confidence-badge.uncertain {
+      background: rgba(176,112,112,0.1);
+      color: var(--dusty);
+      border: 1px solid rgba(176,112,112,0.3);
+    }
+    .confidence-badge .icon { font-size: 0.85rem; }
+
+    /* ── Bar chart ── */
+    .bars {
+      margin-top: 1.4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+    .bar-row {
+      display: grid;
+      grid-template-columns: 80px 1fr 42px;
+      align-items: center;
+      gap: 0.6rem;
+      font-size: 0.78rem;
+    }
+    .bar-name { color: #666; font-style: italic; text-align: right; }
+    .bar-track {
+      height: 6px;
+      background: var(--parchment);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: var(--light-sage);
+      transition: width 0.8s cubic-bezier(0.23,1,0.32,1);
+    }
+    .bar-fill.top { background: linear-gradient(to right, var(--sage), var(--forest)); }
+    .bar-pct { color: #aaa; font-size: 0.72rem; text-align: right; }
+
+    /* ── Divider ── */
+    .card-divider {
+      height: 1px;
+      background: var(--parchment);
+      margin: 1.2rem 0;
+    }
+
+    /* ── Analyze again btn ── */
+    #reset-btn {
+      margin-top: 1.6rem;
+      display: block;
+      width: 100%;
+      max-width: 520px;
+      padding: 0.75rem;
+      background: transparent;
+      border: 1.5px solid rgba(90,122,94,0.4);
+      border-radius: 4px;
+      font-family: 'Libre Baskerville', serif;
+      font-size: 0.82rem;
+      letter-spacing: 0.1em;
+      color: var(--sage);
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+    }
+    #reset-btn:hover {
+      background: var(--sage);
+      border-color: var(--sage);
+      color: white;
+    }
+    #reset-btn { display: none; }
+
+    /* ── Footer ── */
+    footer {
+      margin-top: 4rem;
+      font-size: 0.72rem;
+      color: #bbb;
+      letter-spacing: 0.08em;
+      text-align: center;
+    }
+
+    /* ── Loading spinner ── */
+    #spinner {
+      display: none;
+      margin-top: 2rem;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.8rem;
+    }
+    #spinner.active { display: flex; }
+    .spinner-ring {
+      width: 36px; height: 36px;
+      border: 2.5px solid var(--parchment);
+      border-top-color: var(--sage);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    .spinner-text { font-size: 0.78rem; color: #aaa; font-style: italic; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
 </head>
 <body>
 
-<div class="container">
-    <h1>Identifiera blommor</h1>
-    <p id="status">Laddar AI-modell...</p>
-    
-    <input type="file" id="image-selector" accept="image/*" disabled>
-    <br>
-    <img id="image-preview" src="#" alt="Förhandsvisning">
-    
-    <div id="result-container" class="result-box" style="display: none;">
-        <div id="prediction-text"></div>
-        <div id="confidence-text"></div>
+  <header>
+    <span class="badge">AI · Botanisk analys</span>
+    <h1>Blomm<em>igenkänning</em></h1>
+    <div class="ornament"><span>✦</span></div>
+    <p class="subtitle">Ladda upp en bild för att identifiera blomman</p>
+  </header>
+
+  <div id="status">
+    <span class="dot"></span>
+    <span id="status-text">Laddar modell…</span>
+  </div>
+
+  <div id="upload-area">
+    <input type="file" id="file-input" accept="image/*">
+    <svg class="upload-icon" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="28" cy="28" r="27" stroke="#5a7a5e" stroke-width="1.5"/>
+      <path d="M28 38V18M18 28l10-10 10 10" stroke="#5a7a5e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M19 38h18" stroke="#5a7a5e" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>
+    <span class="upload-label">Välj eller släpp en bild här</span>
+    <span class="upload-sub">JPG, PNG, WebP &nbsp;·&nbsp; Max 10 MB</span>
+  </div>
+
+  <div id="spinner">
+    <div class="spinner-ring"></div>
+    <span class="spinner-text">Analyserar blomman…</span>
+  </div>
+
+  <div id="result-section">
+    <img id="preview-img" src="" alt="Förhandsvisning">
+    <div class="result-card">
+      <div class="result-label">Identifierad blomma</div>
+      <div class="result-flower" id="result-name">—</div>
+      <span class="confidence-badge" id="conf-badge">—</span>
+      <div class="card-divider"></div>
+      <div class="bars" id="bars-container"></div>
     </div>
-</div>
+  </div>
 
-<script>
-    let model;
-    const LABELS = ['Daisy', 'Dandelion', 'Rose', 'Sunflower', 'Tulip'];
+  <button id="reset-btn">↩ Analysera en ny bild</button>
 
-    async function loadModel() {
-        try {
-            await tf.ready();
-            const modelUrl = 'tfjs_model/model.json';
-            
-            // 1. Hämta JSON-filen manuellt
-            const response = await fetch(modelUrl);
-            const modelJson = await response.json();
+  <footer>MobileNetV2 · TensorFlow.js · 5 klasser</footer>
 
-            // 2. Tvinga fram rätt format på InputLayer
-            if (modelJson.modelTopology && modelJson.modelTopology.model_config) {
-                const config = modelJson.modelTopology.model_config.config;
-                let layers = config.layers;
+  <script>
+    const LABELS = ['Solros', 'Tulpan', 'Ros', 'Prästkrage', 'Maskros'];
+    const LABEL_EN = ['sunflower', 'tulip', 'rose', 'daisy', 'dandelion'];
+    const THRESHOLD = 0.75;
 
-                // Om det är en Sequential-modell (vilket din är)
-                if (layers && layers.length > 0) {
-                    const firstLayer = layers[0];
-                    
-                    // Om första lagret saknar batchInputShape, lägg till det manuellt
-                    if (firstLayer.class_name === "InputLayer") {
-                        const batchShape = firstLayer.config.batch_shape || [null, 224, 224, 3];
-                        firstLayer.config.batchInputShape = batchShape;
-                    } 
-                    // Ibland saknas InputLayer helt och ligger som metadata i det första "riktiga" lagret
-                    else if (!firstLayer.config.batchInputShape) {
-                        firstLayer.config.batchInputShape = [null, 224, 224, 3];
-                    }
-                }
-            }
+    let model = null;
+    const statusEl   = document.getElementById('status');
+    const statusText = document.getElementById('status-text');
+    const uploadArea = document.getElementById('upload-area');
+    const fileInput  = document.getElementById('file-input');
+    const resultSec  = document.getElementById('result-section');
+    const previewImg = document.getElementById('preview-img');
+    const resultName = document.getElementById('result-name');
+    const confBadge  = document.getElementById('conf-badge');
+    const barsEl     = document.getElementById('bars-container');
+    const spinner    = document.getElementById('spinner');
+    const resetBtn   = document.getElementById('reset-btn');
 
-            // 3. Ladda modellen från det modifierade objektet
-            model = await tf.loadLayersModel(tf.io.fromMemory(modelJson));
-            
-            document.getElementById('status').innerText = 'Modellen är redo!';
-            document.getElementById('image-selector').disabled = false;
-        } catch (error) {
-            console.error("Fullständigt felmeddelande:", error);
-            document.getElementById('status').innerText = 'Fel: ' + error.message;
-        }
-    }
+    // ── Load model ──────────────────────────────────────────────────
+    (async () => {
+      try {
+        model = await tf.loadLayersModel('tfjs_model/model.json');
+        statusEl.classList.add('ready');
+        statusText.textContent = 'Modell redo';
+      } catch (e) {
+        statusEl.classList.add('error');
+        statusText.textContent = 'Kunde inte ladda modell';
+        console.error(e);
+      }
+    })();
 
-    // --- Samma logik för bildhantering som tidigare ---
-    const imageSelector = document.getElementById('image-selector');
-    const imagePreview = document.getElementById('image-preview');
-
-    imageSelector.addEventListener('change', (event) => {
-        const file = event.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                imagePreview.src = e.target.result;
-                imagePreview.style.display = 'block';
-                imagePreview.onload = () => predict();
-            };
-            reader.readAsDataURL(file);
-        }
+    // ── Drag & drop ──────────────────────────────────────────────────
+    uploadArea.addEventListener('click', () => fileInput.click());
+    uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('drag-over'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag-over'));
+    uploadArea.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadArea.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file && file.type.startsWith('image/')) processFile(file);
+    });
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) processFile(fileInput.files[0]);
     });
 
-    async function predict() {
-        if (!model) return;
+    // ── Process file ─────────────────────────────────────────────────
+    function processFile(file) {
+      if (!model) { alert('Modellen är inte laddad ännu, försök igen om ett ögonblick.'); return; }
 
-        const tensor = tf.tidy(() => {
-            return tf.browser.fromPixels(imagePreview)
-                .resizeNearestNeighbor([224, 224])
-                .toFloat()
-                .div(tf.scalar(127.5))
-                .sub(tf.scalar(1.0))
-                .expandDims(0);
+      const reader = new FileReader();
+      reader.onload = async e => {
+        // Show preview
+        previewImg.src = e.target.result;
+        resultSec.classList.remove('visible');
+        spinner.classList.add('active');
+        uploadArea.style.display = 'none';
+        resetBtn.style.display = 'none';
+
+        // Wait for img to load then classify
+        previewImg.onload = async () => {
+          const probs = await classify(previewImg);
+          spinner.classList.remove('active');
+          renderResult(probs);
+          resultSec.classList.add('visible');
+          resetBtn.style.display = 'block';
+        };
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // ── Classify ─────────────────────────────────────────────────────
+    async function classify(imgEl) {
+      return tf.tidy(() => {
+        const tensor = tf.browser.fromPixels(imgEl)
+          .resizeBilinear([224, 224])
+          .toFloat()
+          .div(127.5)
+          .sub(1)
+          .expandDims(0);
+
+        const logits = model.predict(tensor);
+        const probs  = tf.softmax(logits.squeeze()).arraySync();
+        return probs;
+      });
+    }
+
+    // ── Render result ─────────────────────────────────────────────────
+    function renderResult(probs) {
+      const topIdx  = probs.indexOf(Math.max(...probs));
+      const topProb = probs[topIdx];
+      const certain = topProb >= THRESHOLD;
+
+      resultName.textContent = LABELS[topIdx];
+
+      confBadge.className = 'confidence-badge ' + (certain ? 'certain' : 'uncertain');
+      confBadge.innerHTML = certain
+        ? `<span class="icon">✓</span> Säker &nbsp;(${pct(topProb)})`
+        : `<span class="icon">?</span> Osäker &nbsp;(${pct(topProb)})`;
+
+      // Bars
+      barsEl.innerHTML = '';
+      // Sort indices by prob descending for display
+      const order = [...probs.keys()].sort((a,b) => probs[b] - probs[a]);
+      order.forEach(i => {
+        const row = document.createElement('div');
+        row.className = 'bar-row';
+        row.innerHTML = `
+          <span class="bar-name">${LABELS[i]}</span>
+          <div class="bar-track">
+            <div class="bar-fill ${i === topIdx ? 'top' : ''}" style="width:0%"></div>
+          </div>
+          <span class="bar-pct">${pct(probs[i])}</span>`;
+        barsEl.appendChild(row);
+        // Animate width after paint
+        requestAnimationFrame(() => {
+          row.querySelector('.bar-fill').style.width = (probs[i] * 100) + '%';
         });
-
-        const prediction = await model.predict(tensor).data();
-        tensor.dispose();
-        
-        const maxConfidence = Math.max(...prediction);
-        const classIndex = prediction.indexOf(maxConfidence);
-        displayResult(LABELS[classIndex], maxConfidence);
+      });
     }
 
-    function displayResult(label, confidence) {
-        const resultContainer = document.getElementById('result-container');
-        resultContainer.style.display = 'block';
-        document.getElementById('prediction-text').innerText = `Resultat: ${label}`;
-        
-        const isSaker = confidence >= 0.75;
-        resultContainer.className = `result-box ${isSaker ? 'saker' : 'osaker'}`;
-        document.getElementById('confidence-text').innerText = 
-            `Status: ${isSaker ? 'Säker' : 'Osäker'} (${(confidence * 100).toFixed(1)}%)`;
-    }
+    function pct(v) { return (v * 100).toFixed(1) + '%'; }
 
-    loadModel();
-</script>
+    // ── Reset ─────────────────────────────────────────────────────────
+    resetBtn.addEventListener('click', () => {
+      resultSec.classList.remove('visible');
+      resetBtn.style.display = 'none';
+      uploadArea.style.display = '';
+      fileInput.value = '';
+    });
+  </script>
 </body>
 </html>
