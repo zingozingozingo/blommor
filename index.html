@@ -3,146 +3,133 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Blomsterigenkänning AI</title>
+    <title>Blom-AI Detektor</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <style>
-        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background-color: #f0f4f8; }
-        .container { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; width: 100%; text-align: center; }
-        #image-preview { max-width: 100%; height: auto; margin-top: 15px; border-radius: 4px; display: none; }
-        .result-box { margin-top: 20px; padding: 15px; border-radius: 4px; font-weight: bold; font-size: 1.1em; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 40px; background-color: #f8f9fa; color: #333; }
+        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 450px; width: 100%; text-align: center; }
+        h1 { margin-top: 0; color: #2c3e50; font-size: 1.5rem; }
+        #status { font-size: 0.9rem; color: #666; margin-bottom: 20px; }
+        #image-preview { max-width: 100%; border-radius: 10px; margin: 20px 0; display: none; border: 3px solid #eee; }
+        .result-area { margin-top: 20px; padding: 20px; border-radius: 10px; display: none; transition: all 0.3s; }
         .saker { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
         .osaker { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        #status { margin-bottom: 10px; color: #666; font-style: italic; }
-        input[type="file"] { margin: 15px 0; }
+        .label-name { font-size: 1.4rem; font-weight: bold; display: block; }
+        .confidence-val { font-size: 1rem; opacity: 0.8; }
+        input[type="file"] { margin: 10px 0; padding: 10px; }
     </style>
 </head>
 <body>
 
-<div class="container">
-    <h1>Identifiera blommor</h1>
-    <p id="status">Laddar AI-modell och korrigerar konfiguration...</p>
+<div class="card">
+    <h1>Blom-igenkänning</h1>
+    <div id="status">Förbereder AI...</div>
     
-    <input type="file" id="image-selector" accept="image/*" disabled>
-    <br>
-    <img id="image-preview" src="#" alt="Förhandsvisning">
+    <input type="file" id="image-upload" accept="image/*" disabled>
+    <img id="image-preview" src="" alt="Din bild">
     
-    <div id="result-container" class="result-box" style="display: none;">
-        <div id="prediction-text"></div>
-        <div id="confidence-text"></div>
+    <div id="result-area" class="result-area">
+        <span class="label-name" id="label-text">Analyserar...</span>
+        <span class="confidence-val" id="confidence-text"></span>
     </div>
 </div>
 
 <script>
     let model;
-    // Etiketterna i alfabetisk ordning
+    // Standardordning för blom-dataset (Daisy, Dandelion, Rose, Sunflower, Tulip)
     const LABELS = ['Daisy', 'Dandelion', 'Rose', 'Sunflower', 'Tulip'];
 
-    async function loadModel() {
+    async function init() {
+        const status = document.getElementById('status');
         try {
-            const modelUrl = 'tfjs_model/model.json';
+            // 1. Hämta model.json som råtext
+            const response = await fetch('tfjs_model/model.json');
+            let modelConfigText = await response.text();
+
+            // 2. Fixa Keras 3 -> TFJS inkompatibilitet genom att ersätta batch_shape
+            // Detta löser felet "InputLayer should be passed either a batchInputShape or an inputShape"
+            modelConfigText = modelConfigText.replace(/"batch_shape":/g, '"batchInputShape":');
+
+            // 3. Konvertera tillbaka till objekt för att fixa sökvägar till bin-filerna
+            const modelConfig = JSON.parse(modelConfigText);
             
-            // 1. Hämta JSON-filen som ren text
-            const response = await fetch(modelUrl);
-            const jsonText = await response.text();
-            
-            // 2. Byt ut *alla* felaktiga "batch_shape" mot "batchInputShape" (global sök och ersätt)
-            const fixedJsonText = jsonText.replace(/"batch_shape":/g, '"batchInputShape":');
-            
-            // 3. Gör om till ett objekt för att uppdatera sökvägarna till vikterna (.bin-filerna)
-            const modelManifest = JSON.parse(fixedJsonText);
-            const pathPrefix = 'tfjs_model/'; // Mappen där filerna ligger
-            
-            if (modelManifest.weightsManifest) {
-                modelManifest.weightsManifest.forEach(group => {
-                    // Berätta exakt var .bin-filerna ligger så TF.js hittar dem
-                    group.paths = group.paths.map(path => pathPrefix + path);
+            // Vi måste lägga till mappnamnet i sökvägen för varje shard/viktfil
+            if (modelConfig.weightsManifest) {
+                modelConfig.weightsManifest.forEach(manifest => {
+                    manifest.paths = manifest.paths.map(path => 'tfjs_model/' + path);
                 });
             }
+
+            // 4. Skapa en temporär URL för den modifierade konfigurationen och ladda modellen
+            const blob = new Blob([JSON.stringify(modelConfig)], { type: 'application/json' });
+            const modelUrl = URL.createObjectURL(blob);
             
-            // 4. Skapa en temporär fil i webbläsarens minne med de korrekta datan
-            const blob = new Blob([JSON.stringify(modelManifest)], { type: 'application/json' });
-            const blobUrl = URL.createObjectURL(blob);
+            model = await tf.loadLayersModel(modelUrl);
             
-            // 5. Ladda modellen via den säkra temporära URL:en
-            model = await tf.loadLayersModel(blobUrl);
-            
-            document.getElementById('status').innerText = 'Modellen är redo! Välj en bild.';
-            document.getElementById('image-selector').disabled = false;
-        } catch (error) {
-            console.error("Modellfel:", error);
-            document.getElementById('status').innerText = 'Ett fel uppstod: ' + error.message;
+            status.innerText = "✅ Modellen är inläst och redo!";
+            document.getElementById('image-upload').disabled = false;
+        } catch (err) {
+            console.error(err);
+            status.innerText = "❌ Fel vid laddning: " + err.message;
         }
     }
 
-    const imageSelector = document.getElementById('image-selector');
-    const imagePreview = document.getElementById('image-preview');
+    const upload = document.getElementById('image-upload');
+    const preview = document.getElementById('image-preview');
+    const resultArea = document.getElementById('result-area');
 
-    // Hantera bilduppladdning och förhandsvisning
-    imageSelector.addEventListener('change', (event) => {
-        const file = event.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                imagePreview.src = e.target.result;
-                imagePreview.style.display = 'block';
-                // Starta prediktionen när bilden är helt inladdad
-                imagePreview.onload = () => predict();
-            };
-            reader.readAsDataURL(file);
-        }
+    upload.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            preview.src = event.target.result;
+            preview.style.display = 'block';
+            preview.onload = () => runInference();
+        };
+        reader.readAsDataURL(file);
     });
 
-    // Kör modellen på bilden
-    async function predict() {
+    async function runInference() {
         if (!model) return;
-        document.getElementById('status').innerText = 'Analyserar bild...';
 
-        // Preprocessing: Gör om bilden till en tensor (MobileNetV2-standard)
+        // Förbered bilden
         const tensor = tf.tidy(() => {
-            return tf.browser.fromPixels(imagePreview)
+            const img = tf.browser.fromPixels(preview)
                 .resizeNearestNeighbor([224, 224])
-                .toFloat()
-                .div(tf.scalar(127.5)) // Normalisera till mellan -1 och 1
-                .sub(tf.scalar(1.0))
-                .expandDims(0);
+                .toFloat();
+            
+            // Normalisering enligt MobileNetV2 (-1 till 1)
+            const offset = tf.scalar(127.5);
+            return img.sub(offset).div(offset).expandDims(0);
         });
 
-        const prediction = await model.predict(tensor).data();
-        tensor.dispose(); // Frigör minne
-        
-        // Hitta den blomma med högst poäng
-        const maxConfidence = Math.max(...prediction);
-        const classIndex = prediction.indexOf(maxConfidence);
-        const label = LABELS[classIndex];
+        const predictions = await model.predict(tensor).data();
+        tensor.dispose();
 
-        displayResult(label, maxConfidence);
-        document.getElementById('status').innerText = 'Analys klar.';
+        // Hitta högsta sannolikhet
+        const maxScore = Math.max(...predictions);
+        const classIdx = predictions.indexOf(maxScore);
+        const flower = LABELS[classIdx];
+
+        updateUI(flower, maxScore);
     }
 
-    // Visa resultatet i gränssnittet
-    function displayResult(label, confidence) {
-        const resultContainer = document.getElementById('result-container');
-        const predText = document.getElementById('prediction-text');
+    function updateUI(flower, confidence) {
+        const labelText = document.getElementById('label-text');
         const confText = document.getElementById('confidence-text');
-
-        resultContainer.style.display = 'block';
-        predText.innerText = `Blomma: ${label}`;
         
-        // Formatera sannolikheten som procent (t.ex. 85.2%)
-        const percentage = (confidence * 100).toFixed(1);
-
-        // Säker eller osäker (gräns vid 0.75)
-        if (confidence >= 0.75) {
-            resultContainer.className = 'result-box saker';
-            confText.innerText = `Säker (${percentage}%)`;
-        } else {
-            resultContainer.className = 'result-box osaker';
-            confText.innerText = `Osäker (${percentage}%)`;
-        }
+        resultArea.style.display = 'block';
+        
+        const isSecure = confidence >= 0.75;
+        resultArea.className = isSecure ? 'result-area saker' : 'result-area osaker';
+        
+        labelText.innerText = isSecure ? flower : "Osäker";
+        confText.innerText = `Sannolikhet: ${(confidence * 100).toFixed(1)}% (${isSecure ? 'Säker' : 'Låg tillförlitlighet'})`;
     }
 
-    // Starta laddningen av modellen när sidan laddas
-    loadModel();
+    init();
 </script>
 
 </body>
