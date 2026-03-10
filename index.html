@@ -1,136 +1,399 @@
 <!DOCTYPE html>
 <html lang="sv">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Blom-AI Detektor</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; padding: 40px; background-color: #f8f9fa; color: #333; }
-        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 450px; width: 100%; text-align: center; }
-        h1 { margin-top: 0; color: #2c3e50; font-size: 1.5rem; }
-        #status { font-size: 0.9rem; color: #666; margin-bottom: 20px; }
-        #image-preview { max-width: 100%; border-radius: 10px; margin: 20px 0; display: none; border: 3px solid #eee; }
-        .result-area { margin-top: 20px; padding: 20px; border-radius: 10px; display: none; transition: all 0.3s; }
-        .saker { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .osaker { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        .label-name { font-size: 1.4rem; font-weight: bold; display: block; }
-        .confidence-val { font-size: 1rem; opacity: 0.8; }
-        input[type="file"] { margin: 10px 0; padding: 10px; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blomklassificerare</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #f0f4f0;
+      color: #1a2e1a;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 1rem;
+    }
+    h1 { font-size: 2rem; color: #2d5a27; margin-bottom: 0.25rem; }
+    .subtitle { color: #5a7a55; margin-bottom: 2rem; font-size: 0.95rem; }
+    .card {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      padding: 2rem;
+      width: 100%;
+      max-width: 560px;
+      margin-bottom: 1.5rem;
+    }
+    #drop-zone {
+      border: 2.5px dashed #a8c8a0;
+      border-radius: 12px;
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: #f8fbf7;
+    }
+    #drop-zone:hover, #drop-zone.drag-over { border-color: #2d5a27; background: #f0f7ee; }
+    #drop-zone .icon { font-size: 3rem; margin-bottom: 0.75rem; }
+    #drop-zone p { color: #5a7a55; font-size: 0.95rem; }
+    #drop-zone strong { color: #2d5a27; }
+    #file-input { display: none; }
+    #preview-wrap { margin-top: 1.5rem; display: none; text-align: center; }
+    #preview { max-width: 100%; max-height: 320px; border-radius: 10px; box-shadow: 0 2px 12px rgba(0,0,0,0.12); }
+    #results-wrap { display: none; margin-top: 1.5rem; }
+    #results-wrap h2 { font-size: 1.1rem; color: #2d5a27; margin-bottom: 1rem; }
+    .result-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.65rem; }
+    .result-label { width: 120px; font-size: 0.9rem; font-weight: 500; flex-shrink: 0; }
+    .bar-track { flex: 1; height: 10px; background: #e8f0e6; border-radius: 99px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 99px; background: #5a9e4e; transition: width 0.6s ease; }
+    .bar-fill.top { background: #2d5a27; }
+    .result-pct { width: 42px; text-align: right; font-size: 0.85rem; color: #5a7a55; }
+    #top-result {
+      background: #f0f7ee;
+      border: 1.5px solid #a8c8a0;
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    #top-result .flower-emoji { font-size: 2rem; }
+    #top-result .top-label { font-size: 1.2rem; font-weight: 700; color: #2d5a27; }
+    #top-result .top-conf { font-size: 0.85rem; color: #5a7a55; }
+    #status { margin-top: 1rem; font-size: 0.9rem; color: #5a7a55; text-align: center; min-height: 1.2em; }
+    #status.error { color: #c0392b; }
+    #status.loading { color: #2d5a27; }
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid #a8c8a0; border-top-color: #2d5a27;
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+      vertical-align: middle; margin-right: 5px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #analyze-btn {
+      display: none; margin-top: 1.25rem; width: 100%;
+      padding: 0.85rem; background: #2d5a27; color: white;
+      border: none; border-radius: 10px; font-size: 1rem;
+      font-weight: 600; cursor: pointer; transition: background 0.2s;
+    }
+    #analyze-btn:hover { background: #1e3d1a; }
+    #analyze-btn:disabled { background: #a8c8a0; cursor: not-allowed; }
+    .debug-card {
+      background: #1a1a1a; border-radius: 12px;
+      width: 100%; max-width: 560px; overflow: hidden;
+      margin-bottom: 2rem; box-shadow: 0 4px 24px rgba(0,0,0,0.15);
+    }
+    .debug-header {
+      background: #2a2a2a; padding: 0.6rem 1rem;
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; user-select: none;
+    }
+    .debug-title { color: #7ec876; font-size: 0.85rem; font-family: monospace; font-weight: 600; }
+    .debug-btns { display: flex; gap: 0.5rem; }
+    .debug-btns button {
+      background: #444; color: #aaa; border: none;
+      border-radius: 5px; padding: 0.2rem 0.6rem;
+      font-size: 0.75rem; cursor: pointer;
+    }
+    .debug-btns button:hover { background: #555; color: white; }
+    #debug-body { display: block; }
+    #debug-console {
+      height: 220px; overflow-y: auto;
+      padding: 0.75rem 1rem;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 0.78rem; line-height: 1.6; color: #d4d4d4;
+    }
+    .log-time { color: #555; margin-right: 6px; }
+    .log-info { color: #7ec876; }
+    .log-warn { color: #e5c07b; }
+    .log-error { color: #e06c75; }
+    .log-log { color: #d4d4d4; }
+  </style>
 </head>
 <body>
 
+<h1>🌸 Blomklassificerare</h1>
+<p class="subtitle">Ladda upp en bild – AI avgör blomarten</p>
+
 <div class="card">
-    <h1>Blom-igenkänning 261003</h1>
-    <div id="status">Förbereder AI...</div>
-    
-    <input type="file" id="image-upload" accept="image/*" disabled>
-    <img id="image-preview" src="" alt="Din bild">
-    
-    <div id="result-area" class="result-area">
-        <span class="label-name" id="label-text">Analyserar...</span>
-        <span class="confidence-val" id="confidence-text"></span>
+  <div id="drop-zone" onclick="document.getElementById('file-input').click()">
+    <div class="icon">🌼</div>
+    <p><strong>Klicka för att välja bild</strong></p>
+    <p>eller dra och släpp här</p>
+    <p style="margin-top:0.5rem;font-size:0.8rem;color:#aaa">JPG, PNG, WEBP · max 10 MB</p>
+  </div>
+  <input type="file" id="file-input" accept="image/*" />
+
+  <div id="preview-wrap">
+    <img id="preview" src="" alt="Förhandsvisning" />
+  </div>
+
+  <div id="status"></div>
+  <button id="analyze-btn" onclick="analyzeImage()">🔍 Analysera blomma</button>
+
+  <div id="results-wrap">
+    <div id="top-result"></div>
+    <h2>Alla klasser</h2>
+    <div id="bar-chart"></div>
+  </div>
+</div>
+
+<div class="debug-card">
+  <div class="debug-header">
+    <span class="debug-title">🖥 Debug-konsol</span>
+    <div class="debug-btns">
+      <button onclick="toggleDebug(event)">Minimera</button>
+      <button onclick="clearDebug(event)">Rensa</button>
     </div>
+  </div>
+  <div id="debug-body">
+    <div id="debug-console"></div>
+  </div>
 </div>
 
 <script>
-    let model;
-    // Standardordning för blom-dataset (Daisy, Dandelion, Rose, Sunflower, Tulip)
-    const LABELS = ['Daisy', 'Dandelion', 'Rose', 'Sunflower', 'Tulip'];
+// ─── Config ───────────────────────────────────────────────────────────────────
+const MODEL_URL = './tfjs_model/model.json';
+const IMG_SIZE  = 224;
+const CLASSES   = ['Maskros', 'Prästkrage', 'Ros', 'Solros', 'Tulpan'];
+const EMOJIS    = { Maskros:'🌼', Prästkrage:'🌸', Ros:'🌹', Solros:'🌻', Tulpan:'🌷' };
 
-    async function init() {
-        const status = document.getElementById('status');
-        try {
-            // 1. Hämta model.json som råtext
-            const response = await fetch('tfjs_model/model.json');
-            let modelConfigText = await response.text();
+// ─── Debug ────────────────────────────────────────────────────────────────────
+const dbgEl = document.getElementById('debug-console');
 
-            // 2. Fixa Keras 3 -> TFJS inkompatibilitet genom att ersätta batch_shape
-            // Detta löser felet "InputLayer should be passed either a batchInputShape or an inputShape"
-            modelConfigText = modelConfigText.replace(/"batch_shape":/g, '"batchInputShape":');
+function dbgLog(msg, type) {
+  type = type || 'log';
+  const line = document.createElement('div');
+  const now  = new Date();
+  const ts   = [now.getHours(), now.getMinutes(), now.getSeconds()]
+                 .map(n => String(n).padStart(2,'0')).join(':')
+               + '.' + String(now.getMilliseconds()).padStart(3,'0');
+  const safe = String(msg).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  line.innerHTML = '<span class="log-time">' + ts + '</span>'
+                 + '<span class="log-' + type + '">' + safe + '</span>';
+  dbgEl.appendChild(line);
+  dbgEl.scrollTop = dbgEl.scrollHeight;
+  if (type === 'error') console.error(msg);
+  else if (type === 'warn') console.warn(msg);
+  else console.log(msg);
+}
 
-            // 3. Konvertera tillbaka till objekt för att fixa sökvägar till bin-filerna
-            const modelConfig = JSON.parse(modelConfigText);
-            
-            // Vi måste lägga till mappnamnet i sökvägen för varje shard/viktfil
-            if (modelConfig.weightsManifest) {
-                modelConfig.weightsManifest.forEach(manifest => {
-                    manifest.paths = manifest.paths.map(path => 'tfjs_model/' + path);
-                });
-            }
+function toggleDebug(e) {
+  if (e) e.stopPropagation();
+  const body = document.getElementById('debug-body');
+  const btn  = e ? e.target : null;
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    if (btn) btn.textContent = 'Minimera';
+  } else {
+    body.style.display = 'none';
+    if (btn) btn.textContent = 'Visa';
+  }
+}
 
-            // 4. Skapa en temporär URL för den modifierade konfigurationen och ladda modellen
-            const blob = new Blob([JSON.stringify(modelConfig)], { type: 'application/json' });
-            const modelUrl = URL.createObjectURL(blob);
-            
-            model = await tf.loadLayersModel(modelUrl);
-            
-            status.innerText = "✅ Modellen är inläst och redo!";
-            document.getElementById('image-upload').disabled = false;
-        } catch (err) {
-            console.error(err);
-            status.innerText = "❌ Fel vid laddning: " + err.message;
-        }
+function clearDebug(e) {
+  if (e) e.stopPropagation();
+  dbgEl.innerHTML = '';
+}
+
+window.addEventListener('error', function(e) {
+  dbgLog('UNCAUGHT: ' + e.message + ' (' + e.filename + ':' + e.lineno + ')', 'error');
+});
+window.addEventListener('unhandledrejection', function(e) {
+  dbgLog('UNHANDLED PROMISE: ' + e.reason, 'error');
+});
+
+// ─── State ────────────────────────────────────────────────────────────────────
+var model = null;
+var selectedFile = null;
+
+// ─── Model loading ────────────────────────────────────────────────────────────
+async function loadModel() {
+  setStatus('<span class="spinner"></span>Laddar AI-modell…', 'loading');
+  dbgLog('TF.js version: ' + tf.version.tfjs, 'info');
+  dbgLog('Backend: ' + tf.getBackend(), 'log');
+  dbgLog('Laddar modell från: ' + MODEL_URL, 'info');
+  try {
+    const t0 = performance.now();
+    model = await tf.loadLayersModel(MODEL_URL);
+    const ms = (performance.now() - t0).toFixed(0);
+    dbgLog('✅ Modell laddad på ' + ms + ' ms', 'info');
+    dbgLog('Input shape: ' + JSON.stringify(model.inputs[0].shape), 'log');
+    dbgLog('Output shape: ' + JSON.stringify(model.outputs[0].shape), 'log');
+    dbgLog('Parametrar: ' + model.countParams().toLocaleString('sv'), 'log');
+    setStatus('✅ Modell laddad – välj en bild', '');
+  } catch(err) {
+    dbgLog('❌ Modellfel: ' + err.message, 'error');
+    if (err.message.match(/fetch|404|network/i)) {
+      setStatus('⚠️ Kunde inte ladda modellen – kontrollera att mappen tfjs_model/ finns på GitHub.', 'error');
+    } else {
+      setStatus('Modellfel: ' + err.message, 'error');
+    }
+  }
+}
+
+// ─── File handling ────────────────────────────────────────────────────────────
+document.getElementById('file-input').addEventListener('change', function(e) {
+  handleFile(e.target.files[0]);
+});
+
+var dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', function(e) {
+  e.preventDefault();
+  dz.classList.add('drag-over');
+});
+dz.addEventListener('dragleave', function() { dz.classList.remove('drag-over'); });
+dz.addEventListener('drop', function(e) {
+  e.preventDefault();
+  dz.classList.remove('drag-over');
+  var f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+
+function handleFile(file) {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    dbgLog('Felaktig filtyp: ' + file.type, 'warn');
+    setStatus('Välj en bildfil (JPG, PNG eller WEBP).', 'error');
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    dbgLog('Filen för stor: ' + (file.size/1024/1024).toFixed(1) + ' MB', 'warn');
+    setStatus('Filen är för stor (max 10 MB).', 'error');
+    return;
+  }
+  selectedFile = file;
+  dbgLog('Fil vald: ' + file.name + ' (' + (file.size/1024).toFixed(1) + ' KB, ' + file.type + ')', 'log');
+
+  var reader = new FileReader();
+  reader.onload = function(ev) {
+    var pw = document.getElementById('preview-wrap');
+    var pi = document.getElementById('preview');
+    pi.src = ev.target.result;
+    pw.style.display = 'block';
+    document.getElementById('results-wrap').style.display = 'none';
+    document.getElementById('analyze-btn').style.display = 'block';
+    if (model) {
+      setStatus('Bild vald – tryck "Analysera blomma".', '');
+    } else {
+      setStatus('<span class="spinner"></span>Väntar på modell…', 'loading');
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+// ─── Inference ────────────────────────────────────────────────────────────────
+async function analyzeImage() {
+  if (!selectedFile) return;
+  var btn = document.getElementById('analyze-btn');
+  btn.disabled = true;
+  setStatus('<span class="spinner"></span>Analyserar…', 'loading');
+  document.getElementById('results-wrap').style.display = 'none';
+
+  try {
+    if (!model) {
+      dbgLog('Modell saknas – laddar…', 'warn');
+      await loadModel();
+      if (!model) throw new Error('Modellen kunde inte laddas.');
     }
 
-    const upload = document.getElementById('image-upload');
-    const preview = document.getElementById('image-preview');
-    const resultArea = document.getElementById('result-area');
+    var imgEl = document.getElementById('preview');
+    dbgLog('Förbereder tensor ' + IMG_SIZE + 'x' + IMG_SIZE + '…', 'log');
+    var t0 = performance.now();
 
-    upload.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            preview.src = event.target.result;
-            preview.style.display = 'block';
-            preview.onload = () => runInference();
-        };
-        reader.readAsDataURL(file);
+    // Ensure image is fully loaded
+    await new Promise(function(res) {
+      if (imgEl.complete) { res(); } else { imgEl.onload = res; }
     });
 
-    async function runInference() {
-        if (!model) return;
+    var tensor = tf.tidy(function() {
+      var raw     = tf.browser.fromPixels(imgEl);
+      var resized = tf.image.resizeBilinear(raw, [IMG_SIZE, IMG_SIZE]);
+      // MobileNetV2 preprocessing: scale pixels to [-1, 1]
+      var scaled  = resized.toFloat().div(127.5).sub(1.0);
+      return scaled.expandDims(0);
+    });
 
-        // Förbered bilden
-        const tensor = tf.tidy(() => {
-            const img = tf.browser.fromPixels(preview)
-                .resizeNearestNeighbor([224, 224])
-                .toFloat();
-            
-            // Normalisering enligt MobileNetV2 (-1 till 1)
-            const offset = tf.scalar(127.5);
-            return img.sub(offset).div(offset).expandDims(0);
-        });
+    dbgLog('Tensor shape: ' + tensor.shape, 'log');
 
-        const predictions = await model.predict(tensor).data();
-        tensor.dispose();
+    var outputTensor = model.predict(tensor);
+    var logits = await outputTensor.data();
+    tensor.dispose();
+    outputTensor.dispose();
 
-        // Hitta högsta sannolikhet
-        const maxScore = Math.max(...predictions);
-        const classIdx = predictions.indexOf(maxScore);
-        const flower = LABELS[classIdx];
+    var ms = (performance.now() - t0).toFixed(0);
+    dbgLog('Inferens klar på ' + ms + ' ms', 'info');
+    dbgLog('Raw logits: [' + Array.from(logits).map(function(v){return v.toFixed(4);}).join(', ') + ']', 'log');
 
-        updateUI(flower, maxScore);
-    }
+    // Softmax
+    var expArr = Array.from(logits).map(Math.exp);
+    var expSum = expArr.reduce(function(a,b){return a+b;}, 0);
+    var probs  = expArr.map(function(v){return v/expSum;});
 
-    function updateUI(flower, confidence) {
-        const labelText = document.getElementById('label-text');
-        const confText = document.getElementById('confidence-text');
-        
-        resultArea.style.display = 'block';
-        
-        const isSecure = confidence >= 0.75;
-        resultArea.className = isSecure ? 'result-area saker' : 'result-area osaker';
-        
-        labelText.innerText = isSecure ? flower : "Osäker";
-        confText.innerText = `Sannolikhet: ${(confidence * 100).toFixed(1)}% (${isSecure ? 'Säker' : 'Låg tillförlitlighet'})`;
-    }
+    dbgLog('Sannolikheter: [' + probs.map(function(v){return (v*100).toFixed(1)+'%';}).join(', ') + ']', 'log');
 
-    init();
+    var results = CLASSES.map(function(name,i) { return {name:name, prob:probs[i]}; });
+    results.sort(function(a,b){return b.prob-a.prob;});
+
+    dbgLog('🏆 Top 1: ' + results[0].name + ' (' + (results[0].prob*100).toFixed(1) + '%)', 'info');
+
+    renderResults(results);
+    setStatus('', '');
+
+  } catch(err) {
+    dbgLog('❌ Fel vid analys: ' + err.message, 'error');
+    if (err.stack) dbgLog(err.stack.split('\n').slice(0,4).join(' | '), 'error');
+    setStatus('Fel: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ─── Render results ───────────────────────────────────────────────────────────
+function renderResults(sorted) {
+  var top   = sorted[0];
+  var emoji = EMOJIS[top.name] || '🌺';
+  var pct   = (top.prob * 100).toFixed(1);
+  var conf  = top.prob > 0.85 ? 'Hög säkerhet' : top.prob > 0.60 ? 'God säkerhet' : 'Låg säkerhet';
+
+  document.getElementById('top-result').innerHTML =
+    '<div class="flower-emoji">' + emoji + '</div>' +
+    '<div>' +
+      '<div class="top-label">' + top.name + '</div>' +
+      '<div class="top-conf">' + pct + '% – ' + conf + '</div>' +
+    '</div>';
+
+  var chart = document.getElementById('bar-chart');
+  chart.innerHTML = '';
+  sorted.forEach(function(item, i) {
+    var p = (item.prob * 100).toFixed(1);
+    chart.innerHTML +=
+      '<div class="result-row">' +
+        '<div class="result-label">' + (EMOJIS[item.name]||'🌺') + ' ' + item.name + '</div>' +
+        '<div class="bar-track"><div class="bar-fill ' + (i===0?'top':'') + '" style="width:' + p + '%"></div></div>' +
+        '<div class="result-pct">' + p + '%</div>' +
+      '</div>';
+  });
+
+  document.getElementById('results-wrap').style.display = 'block';
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function setStatus(html, type) {
+  var el = document.getElementById('status');
+  el.innerHTML = html;
+  el.className = type || '';
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+dbgLog('Sida laddad', 'info');
+dbgLog('User-Agent: ' + navigator.userAgent, 'log');
+loadModel();
 </script>
-
 </body>
 </html>
